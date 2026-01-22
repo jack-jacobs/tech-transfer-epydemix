@@ -1,0 +1,385 @@
+---
+title: "Epidemic Modeling with Epydemix"
+subtitle: "Session 3 - Tutorial 1"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Prerequisites
+
+This tutorial uses the `reticulate` package to call Epydemix (a Python package) from R.
+Make sure you have:
+
+1. Python with Epydemix installed (`pip install epydemix` or `conda install -c conda-forge epydemix`)
+2. The `reticulate` R package (`install.packages("reticulate")`)
+
+```{r load-reticulate}
+library(reticulate)
+
+# Option A: Use a conda environment
+# use_condaenv("epydemix-workshop")
+
+# Option B: Use system Python
+# use_python("/usr/bin/python3")
+
+# Import epydemix
+epydemix <- import("epydemix")
+EpiModel <- epydemix$EpiModel
+builtins <- import_builtins()
+```
+
+---
+
+## 1. Building an SEIR Model from Scratch
+
+Compartmental models divide the population into states. The **SEIR model** has four:
+
+- **S** (Susceptible): Can be infected
+- **E** (Exposed): Infected but not yet infectious (latent period)
+- **I** (Infectious): Can transmit the disease
+- **R** (Recovered): Immune
+
+Transitions between compartments are either:
+
+- **Mediated**: Depends on interactions (S→E requires contact with I)
+- **Spontaneous**: Happens at a fixed rate (E→I, I→R)
+
+```{r define-seir}
+# Create the model with four compartments
+model <- EpiModel(
+  name = "SEIR Model",
+  compartments = c("S", "E", "I", "R")
+)
+
+# Add transitions
+# S → E: mediated by contact with infectious individuals (rate β)
+params_SE <- builtins$tuple(list("beta", "I"))
+model$add_transition(source = "S", target = "E", params = params_SE, kind = "mediated")
+
+# E → I: spontaneous at rate σ (1/latent period)
+model$add_transition(source = "E", target = "I", params = "sigma", kind = "spontaneous")
+
+# I → R: spontaneous at rate γ (1/infectious period)
+model$add_transition(source = "I", target = "R", params = "gamma", kind = "spontaneous")
+
+# Set parameter values
+model$add_parameter("beta", 0.035)   # transmission rate
+model$add_parameter("sigma", 0.2)    # 1/5 days latent period
+model$add_parameter("gamma", 0.1)    # 1/10 days infectious period
+
+model
+```
+
+---
+
+## 2. Loading Population Data
+
+Epydemix includes demographic data and synthetic contact matrices for 400+ regions worldwide.
+
+```{r load-population}
+# Load US population data
+load_epydemix_population <- epydemix$population$load_epydemix_population
+population <- load_epydemix_population("United_States")
+population
+```
+
+```{r set-population}
+# Attach the population to our model
+model$set_population(population)
+```
+
+### Exploring the Population
+
+```{r viz-population}
+# Import visualization functions
+viz <- import("epydemix.visualization")
+plot_contact_matrix <- viz$plot_contact_matrix
+plot_population <- viz$plot_population
+
+# Plot population distribution
+plot_population(population, title = "Population Distribution")
+plot_population(population, title = "Population Distribution (%)", show_perc = TRUE)
+```
+
+```{r viz-contacts}
+# Contact matrices by setting
+plot_contact_matrix(population, "home", show_values = TRUE)
+plot_contact_matrix(population, "school", show_values = TRUE)
+plot_contact_matrix(population, "work", show_values = TRUE)
+plot_contact_matrix(population, "community", show_values = TRUE)
+```
+
+**Reading contact matrices:** Each cell $(i, j)$ shows the average daily contacts that a person in age group $i$ has with people in age group $j$.
+
+### What is the Model $R_0$?
+
+$$R_0 = \frac{\beta}{\gamma} \rho(C)$$
+
+Where $\rho(C)$ is the spectral radius of the contact matrix $C$.
+
+```{r compute-r0}
+# Get overall contact matrix as sum of individual matrices
+contact_matrices <- model$population$contact_matrices
+matrix_list <- py_to_r(contact_matrices$values())
+C <- Reduce(`+`, lapply(matrix_list, py_to_r))
+
+# Compute spectral radius (largest eigenvalue)
+eigenvalues <- eigen(C)$values
+rho <- max(Re(eigenvalues))
+
+# Compute R0
+beta <- py_to_r(model$parameters["beta"])
+gamma <- py_to_r(model$parameters["gamma"])
+R0 <- beta / gamma * rho
+
+cat(sprintf("R0: %.2f\n", R0))
+```
+
+---
+
+## 3. Running Simulations
+
+Epydemix uses **stochastic chain-binomial** simulations. Each run produces a different trajectory due to randomness.
+
+```{r run-simulation}
+# Compute percentage for seeding ~10 infected individuals
+Nk_r <- py_to_r(population$Nk)
+percentage_in_agents <- 10 / sum(Nk_r)
+
+# Run 25 stochastic simulations
+results <- model$run_simulations(
+  start_date = "2026-01-01",
+  end_date = "2026-08-31",
+  Nsim = 25L,
+  percentage_in_agents = percentage_in_agents
+)
+```
+
+### Visualizing Results
+
+```{r viz-compartments}
+plot_quantiles <- viz$plot_quantiles
+plot_trajectories <- viz$plot_trajectories
+
+# Get quantiles across simulations
+df_quantiles <- results$get_quantiles_compartments()
+
+# Plot all compartments
+plot_quantiles(
+  df_quantiles,
+  columns = c("S_total", "E_total", "I_total", "R_total"),
+  title = "SEIR Epidemic Trajectory"
+)
+```
+
+```{r viz-age-groups}
+# Infections by age group
+plot_quantiles(
+  df_quantiles,
+  columns = c("I_0-4", "I_5-19", "I_20-49", "I_50-64", "I_65+"),
+  title = "Infections by Age Group",
+  legend_loc = "upper right"
+)
+```
+
+```{r viz-trajectories}
+# Show individual simulation trajectories
+trajectories <- results$get_stacked_compartments()
+
+plot_trajectories(
+  trajectories,
+  columns = c("I_total"),
+  title = "Individual Simulation Trajectories (Infected)"
+)
+```
+
+---
+
+## 4. Modeling Interventions
+
+Non-pharmaceutical interventions (NPIs) reduce transmission by limiting contacts. Epydemix supports two approaches:
+
+1. **`add_intervention`**: Reduce contacts in specific settings (school closure, work-from-home)
+2. **`override_parameter`**: Modify transmission parameters directly (masking, social distancing)
+
+```{r setup-comparison}
+# Function to create a fresh SEIR model
+create_seir_model <- function() {
+  m <- EpiModel(name = "SEIR", compartments = c("S", "E", "I", "R"))
+
+  params_SE <- builtins$tuple(list("beta", "I"))
+  m$add_transition(source = "S", target = "E", params = params_SE, kind = "mediated")
+  m$add_transition(source = "E", target = "I", params = "sigma", kind = "spontaneous")
+  m$add_transition(source = "I", target = "R", params = "gamma", kind = "spontaneous")
+
+  m$add_parameter("beta", 0.035)
+  m$add_parameter("sigma", 0.2)
+  m$add_parameter("gamma", 0.1)
+
+  m$set_population(population)
+  return(m)
+}
+
+# Create three identical models for comparison
+model_baseline <- create_seir_model()
+model_contact_intervention <- create_seir_model()
+model_transmission_intervention <- create_seir_model()
+```
+
+```{r add-interventions}
+# Model 2: Contact interventions (school closure + work-from-home)
+model_contact_intervention$add_intervention(
+  layer_name = "school",
+  start_date = "2026-04-01",
+  end_date = "2026-08-31",
+  reduction_factor = 0.3,  # 70% reduction
+  name = "school closure"
+)
+
+model_contact_intervention$add_intervention(
+  layer_name = "work",
+  start_date = "2026-04-01",
+  end_date = "2026-08-31",
+  reduction_factor = 0.5,  # 50% reduction
+  name = "work from home"
+)
+
+# Model 3: Transmission reduction (e.g., masking)
+model_transmission_intervention$override_parameter(
+  start_date = "2026-04-01",
+  end_date = "2026-08-31",
+  parameter_name = "beta",
+  value = 0.025  # reduced from 0.035
+)
+```
+
+### Visualizing Intervention Impact on Contacts
+
+```{r viz-spectral-radius}
+utils_module <- import("epydemix.utils")
+compute_simulation_dates <- utils_module$compute_simulation_dates
+plot_spectral_radius <- viz$plot_spectral_radius
+
+simulation_dates <- compute_simulation_dates("2026-01-01", "2026-08-31")
+model_contact_intervention$compute_contact_reductions(simulation_dates)
+
+plot_spectral_radius(model_contact_intervention, show_perc = TRUE)
+```
+
+### Comparing Scenarios
+
+```{r run-comparison}
+Nk_r <- py_to_r(population$Nk)
+pct <- 10 / sum(Nk_r)
+
+results_baseline <- model_baseline$run_simulations(
+  start_date = "2026-01-01", end_date = "2026-08-31",
+  Nsim = 25L, percentage_in_agents = pct
+)
+
+results_contact <- model_contact_intervention$run_simulations(
+  start_date = "2026-01-01", end_date = "2026-08-31",
+  Nsim = 25L, percentage_in_agents = pct
+)
+
+results_transmission <- model_transmission_intervention$run_simulations(
+  start_date = "2026-01-01", end_date = "2026-08-31",
+  Nsim = 25L, percentage_in_agents = pct
+)
+```
+
+```{r viz-comparison}
+df_baseline <- results_baseline$get_quantiles_compartments()
+df_contact <- results_contact$get_quantiles_compartments()
+df_transmission <- results_transmission$get_quantiles_compartments()
+
+ax <- plot_quantiles(df_baseline, columns = c("I_total"),
+                     colors = "gray", labels = "No intervention")
+
+ax <- plot_quantiles(df_contact, columns = c("I_total"),
+                     colors = "blue", labels = "Contact intervention (school + work)", ax = ax)
+
+ax <- plot_quantiles(df_transmission, columns = c("I_total"),
+                     colors = "green", labels = "Transmission reduction (masking)", ax = ax)
+
+ax$set_title("Comparison of Intervention Strategies")
+ax$legend()
+ax
+```
+
+### Quantifying Impact
+
+```{r compute-impact}
+traj_baseline <- results_baseline$get_stacked_compartments()
+traj_contact <- results_contact$get_stacked_compartments()
+traj_transmission <- results_transmission$get_stacked_compartments()
+
+# Total infections (final R count)
+total_baseline <- py_to_r(traj_baseline["R_total"][, -1L])
+total_contact <- py_to_r(traj_contact["R_total"][, -1L])
+total_transmission <- py_to_r(traj_transmission["R_total"][, -1L])
+
+averted_contact <- (total_baseline - total_contact) / total_baseline * 100
+averted_transmission <- (total_baseline - total_transmission) / total_baseline * 100
+
+# Peak infections
+peak_baseline <- py_to_r(traj_baseline["I_total"]$max(axis = 1L))
+peak_contact <- py_to_r(traj_contact["I_total"]$max(axis = 1L))
+peak_transmission <- py_to_r(traj_transmission["I_total"]$max(axis = 1L))
+
+peak_reduction_contact <- (peak_baseline - peak_contact) / peak_baseline * 100
+peak_reduction_transmission <- (peak_baseline - peak_transmission) / peak_baseline * 100
+
+cat("Contact intervention (school + work):\n")
+cat(sprintf("  Infections averted: %.1f%%\n", median(averted_contact)))
+cat(sprintf("  Peak reduction: %.1f%%\n", median(peak_reduction_contact)))
+cat("\nTransmission reduction (masking):\n")
+cat(sprintf("  Infections averted: %.1f%%\n", median(averted_transmission)))
+cat(sprintf("  Peak reduction: %.1f%%\n", median(peak_reduction_transmission)))
+```
+
+```{r viz-impact, fig.width=10, fig.height=4}
+library(ggplot2)
+library(tibble)
+
+df_impact <- tibble(
+  metric = c(
+    rep("Infections Averted (%)", length(averted_contact) + length(averted_transmission)),
+    rep("Peak Reduction (%)", length(peak_reduction_contact) + length(peak_reduction_transmission))
+  ),
+  intervention = c(
+    rep("Contact", length(averted_contact)),
+    rep("Transmission", length(averted_transmission)),
+    rep("Contact", length(peak_reduction_contact)),
+    rep("Transmission", length(peak_reduction_transmission))
+  ),
+  value = c(
+    averted_contact, averted_transmission,
+    peak_reduction_contact, peak_reduction_transmission
+  )
+)
+
+ggplot(df_impact, aes(x = intervention, y = value, fill = intervention)) +
+  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+  facet_wrap(~metric, scales = "free_y") +
+  labs(x = NULL, y = "Percentage", title = "Impact of Intervention Strategies") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Contact" = "blue", "Transmission" = "green"))
+```
+
+---
+
+## Resources
+
+- [Epydemix Documentation](https://epydemix.readthedocs.io/)
+- [Supported Geographies](https://github.com/epistorm/epydemix-data/blob/main/locations.csv)
+- [Full Tutorial Series](https://github.com/epistorm/epydemix/tree/main/tutorials)
+- [Reticulate Package](https://rstudio.github.io/reticulate/)

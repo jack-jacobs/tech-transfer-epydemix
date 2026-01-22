@@ -1,0 +1,246 @@
+---
+title: "Exercise 1 Solution: SEIRS Model"
+subtitle: "Session 4 - Exercise Solutions"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Prerequisites
+
+This tutorial uses the `reticulate` package to call Epydemix (a Python package) from R.
+Make sure you have:
+
+1. Python with Epydemix installed (`pip install epydemix` or `conda install -c conda-forge epydemix`)
+2. The `reticulate` R package (`install.packages("reticulate")`)
+
+```{r load-reticulate}
+library(reticulate)
+
+# Option A: Use a conda environment
+# use_condaenv("epydemix-workshop")
+
+# Option B: Use system Python
+# use_python("/usr/bin/python3")
+
+# Import epydemix
+epydemix <- import("epydemix")
+EpiModel <- epydemix$EpiModel
+builtins <- import_builtins()
+```
+
+---
+
+## 1. Create the SEIRS Model
+
+The SEIRS model extends the standard SEIR by adding **waning immunity** (R to S transition).
+This means recovered individuals eventually lose immunity and become susceptible again.
+
+**Compartments:** S, E, I, R
+
+**Transitions:**
+
+- S to E: infection (mediated by contact with I)
+- E to I: progression to infectious (spontaneous)
+- I to R: recovery (spontaneous)
+- R to S: waning immunity (spontaneous) -- the key addition
+
+```{r create-seirs}
+# Create SEIRS model with four compartments
+model <- EpiModel(
+  name = "SEIRS Model",
+  compartments = c("S", "E", "I", "R")
+)
+
+# S -> E: infection mediated by contact with I
+params_SE <- builtins$tuple(list("beta", "I"))
+model$add_transition(source = "S", target = "E", params = params_SE, kind = "mediated")
+
+# E -> I: spontaneous progression
+model$add_transition(source = "E", target = "I", params = "sigma", kind = "spontaneous")
+
+# I -> R: spontaneous recovery
+model$add_transition(source = "I", target = "R", params = "gamma", kind = "spontaneous")
+
+# R -> S: waning immunity (the SEIRS addition)
+model$add_transition(source = "R", target = "S", params = "omega", kind = "spontaneous")
+
+# Set parameter values
+model$add_parameter("beta", 0.03)    # transmission rate
+model$add_parameter("sigma", 0.2)    # 1/5 day latent period
+model$add_parameter("gamma", 0.1)    # 1/10 day infectious period
+model$add_parameter("omega", 0.01)   # 1/100 day immunity duration
+
+model
+```
+
+---
+
+## 2. Load Population Data
+
+We use Brazil as our example country. Epydemix provides demographic data and contact matrices
+for 400+ regions worldwide.
+
+```{r load-population}
+# Load Brazil population data
+load_epydemix_population <- epydemix$population$load_epydemix_population
+population <- load_epydemix_population("Brazil")
+
+# Attach population to the model
+model$set_population(population)
+
+population
+```
+
+### Visualize Population and Contacts
+
+```{r viz-population}
+# Import visualization module
+viz <- import("epydemix.visualization")
+plot_population <- viz$plot_population
+plot_contact_matrix <- viz$plot_contact_matrix
+
+# Plot population distribution
+plot_population(population, title = "Brazil Population Distribution")
+plot_population(population, title = "Brazil Population Distribution (%)", show_perc = TRUE)
+```
+
+```{r viz-contacts}
+# Contact matrices by setting
+plot_contact_matrix(population, "home", show_values = TRUE)
+plot_contact_matrix(population, "school", show_values = TRUE)
+plot_contact_matrix(population, "work", show_values = TRUE)
+plot_contact_matrix(population, "community", show_values = TRUE)
+```
+
+---
+
+## 3. Run Simulations
+
+We run 50 stochastic simulations over one year, seeding with approximately 10 infected individuals.
+
+```{r run-simulations}
+# Compute seeding percentage for ~10 infected individuals
+Nk_r <- py_to_r(population$Nk)
+percentage_in_agents <- 10 / sum(Nk_r)
+
+# Run 50 stochastic simulations over 1 year
+results <- model$run_simulations(
+  start_date = "2026-01-01",
+  end_date = "2026-12-31",
+  Nsim = 50L,
+  percentage_in_agents = percentage_in_agents
+)
+```
+
+### Visualize Compartments
+
+```{r viz-compartments}
+plot_quantiles <- viz$plot_quantiles
+
+# Get quantiles across simulations
+df_quantiles <- results$get_quantiles_compartments()
+
+# Plot all compartments
+plot_quantiles(
+  df_quantiles,
+  columns = c("S_total", "E_total", "I_total", "R_total"),
+  title = "SEIRS Model - Brazil (1 Year)"
+)
+```
+
+### Infections by Age Group
+
+```{r viz-age-groups}
+plot_quantiles(
+  df_quantiles,
+  columns = c("I_0-4", "I_5-19", "I_20-49", "I_50-64", "I_65+"),
+  title = "Infections by Age Group",
+  legend_loc = "upper right"
+)
+```
+
+---
+
+## 4. Compare SEIRS vs SEIR
+
+To understand the effect of waning immunity, we create a standard SEIR model (without the R to S transition) and compare.
+
+```{r create-seir}
+# Create standard SEIR model (no waning immunity)
+model_seir <- EpiModel(
+  name = "SEIR Model",
+  compartments = c("S", "E", "I", "R")
+)
+
+# Same transitions as SEIRS, but without R -> S
+params_SE_seir <- builtins$tuple(list("beta", "I"))
+model_seir$add_transition(source = "S", target = "E", params = params_SE_seir, kind = "mediated")
+model_seir$add_transition(source = "E", target = "I", params = "sigma", kind = "spontaneous")
+model_seir$add_transition(source = "I", target = "R", params = "gamma", kind = "spontaneous")
+# No R -> S transition!
+
+model_seir$add_parameter("beta", 0.03)
+model_seir$add_parameter("sigma", 0.2)
+model_seir$add_parameter("gamma", 0.1)
+model_seir$set_population(population)
+
+# Run simulations with same parameters
+results_seir <- model_seir$run_simulations(
+  start_date = "2026-01-01",
+  end_date = "2026-12-31",
+  Nsim = 50L,
+  percentage_in_agents = percentage_in_agents
+)
+```
+
+### Compare Infected and Susceptible Dynamics
+
+```{r compare-infected}
+df_seir <- results_seir$get_quantiles_compartments()
+
+# Compare infected populations
+ax <- plot_quantiles(df_quantiles, columns = c("I_total"),
+                     colors = "blue", labels = "SEIRS (waning immunity)")
+ax <- plot_quantiles(df_seir, columns = c("I_total"),
+                     colors = "orange", labels = "SEIR (permanent immunity)", ax = ax)
+ax$set_title("Infected Over Time: SEIRS vs SEIR")
+ax$legend()
+ax
+```
+
+```{r compare-susceptible}
+# Compare susceptible populations
+ax <- plot_quantiles(df_quantiles, columns = c("S_total"),
+                     colors = "blue", labels = "SEIRS (waning immunity)")
+ax <- plot_quantiles(df_seir, columns = c("S_total"),
+                     colors = "orange", labels = "SEIR (permanent immunity)", ax = ax)
+ax$set_title("Susceptible Over Time: SEIRS vs SEIR")
+ax$legend()
+ax
+```
+
+---
+
+## Discussion
+
+**How does waning immunity affect the long-term dynamics?**
+
+1. **SEIR (permanent immunity):** The epidemic burns through the population once and then
+   dies out when herd immunity is reached. Susceptibles decrease monotonically.
+
+2. **SEIRS (waning immunity):**
+   - The susceptible pool is continuously replenished as recovered individuals lose immunity
+   - This can lead to **recurrent epidemic waves** or **endemic equilibrium**
+   - With omega = 0.01 (100-day immunity), we see the infection persisting longer
+
+**Key insight:** Waning immunity is crucial for modeling diseases where reinfection is
+possible (e.g., influenza, common cold coronaviruses, RSV). The rate of waning (omega)
+determines whether the disease becomes endemic or causes periodic epidemics.

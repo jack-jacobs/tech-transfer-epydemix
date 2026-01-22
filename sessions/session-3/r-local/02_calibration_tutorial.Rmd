@@ -1,0 +1,401 @@
+---
+title: "Model Calibration with Epydemix"
+subtitle: "Session 3 - Tutorial 2"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Prerequisites
+
+This tutorial uses the `reticulate` package to call Epydemix (a Python package) from R.
+Make sure you have:
+
+1. Python with Epydemix installed (`pip install epydemix` or `conda install -c conda-forge epydemix`)
+2. The `reticulate` R package (`install.packages("reticulate")`)
+
+```{r load-reticulate}
+library(reticulate)
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+# Option A: Use a conda environment
+# use_condaenv("epydemix-workshop")
+
+# Option B: Use system Python
+# use_python("/usr/bin/python3")
+
+# Import epydemix modules
+epydemix <- import("epydemix")
+load_predefined_model <- epydemix$load_predefined_model
+utils_module <- import("epydemix.utils")
+compute_simulation_dates <- utils_module$compute_simulation_dates
+```
+
+---
+
+## 1. Loading and Exploring the Data
+
+We'll calibrate an SIR model to synthetic incidence data (new infections per day) from Indonesia.
+
+```{r load-data}
+# Load the CSV directly from GitHub
+data <- read_csv(
+  "https://raw.githubusercontent.com/epistorm/epydemix/refs/heads/main/tutorials/data/incidence_data.csv",
+  show_col_types = FALSE
+)
+data <- data %>% mutate(date = as.Date(date))
+
+# Split into calibration and projection periods
+n_total <- nrow(data)
+n_calibration <- n_total - 40
+data_calibration <- data[1:n_calibration, ]
+data_projection <- data[(n_calibration + 1):n_total, ]
+
+cat(sprintf("Calibration period: %s to %s (%d days)\n",
+            data_calibration$date[1],
+            data_calibration$date[nrow(data_calibration)],
+            nrow(data_calibration)))
+cat(sprintf("Projection period: %s to %s (%d days)\n",
+            data_projection$date[1],
+            data_projection$date[nrow(data_projection)],
+            nrow(data_projection)))
+```
+
+```{r viz-data, fig.width=10, fig.height=4}
+ggplot() +
+  geom_point(data = data_calibration, aes(x = date, y = data), color = "black") +
+  geom_point(data = data_projection, aes(x = date, y = data), color = "gray", alpha = 0.5) +
+  geom_vline(xintercept = as.numeric(data_calibration$date[nrow(data_calibration)]),
+             color = "red", linetype = "dashed", alpha = 0.5) +
+  labs(x = "Date", y = "New Infections", title = "Incidence Data: Calibration vs Held-out") +
+  theme_minimal()
+```
+
+---
+
+## 2. Setting Up the Model
+
+```{r setup-model}
+# Load predefined SIR model
+model <- load_predefined_model("SIR")
+model$import_epydemix_population(population_name = "Indonesia")
+model
+```
+
+```{r setup-params}
+# Get population size
+Nk_r <- py_to_r(model$population$Nk)
+
+# Initial conditions: 0.05% of population infected
+infected <- as.integer(Nk_r * 0.05 / 100)
+susceptible <- as.integer(Nk_r - infected)
+recovered <- rep(0L, length(Nk_r))
+
+initial_conditions <- reticulate::dict(
+  Susceptible = susceptible,
+  Infected = infected,
+  Recovered = recovered
+)
+
+# Date strings
+start_date_chr <- as.character(data_calibration$date[1])
+end_date_calibration_chr <- as.character(data_calibration$date[nrow(data_calibration)])
+end_date_projection_chr <- as.character(data_projection$date[nrow(data_projection)])
+
+# Parameters dict for calibration
+parameters <- reticulate::dict(
+  initial_conditions_dict = initial_conditions,
+  epimodel = model,
+  start_date = start_date_chr,
+  end_date = end_date_calibration_chr
+)
+
+# Compute simulation dates
+simulation_dates_calibration <- compute_simulation_dates(
+  start_date = start_date_chr,
+  end_date = end_date_calibration_chr
+)
+
+simulation_dates_projection <- compute_simulation_dates(
+  start_date = start_date_chr,
+  end_date = end_date_projection_chr
+)
+```
+
+---
+
+## 3. Defining Priors and the Calibration Wrapper
+
+### Prior Distributions
+
+Prior distributions encode our beliefs about parameter values before seeing the data.
+
+```{r define-priors}
+# Import scipy.stats
+scipy_stats <- import("scipy.stats")
+
+# Uniform priors for transmission and recovery rates
+priors <- reticulate::dict(
+  transmission_rate = scipy_stats$uniform(loc = 0.010, scale = 0.020),  # U(0.01, 0.03)
+  recovery_rate = scipy_stats$uniform(loc = 0.15, scale = 0.1)          # U(0.15, 0.25)
+)
+```
+
+### Simulation Wrapper Function
+
+The `ABCSampler` requires a function that returns a dictionary with a `'data'` key. We define this in Python since it needs to be callable by the calibration engine.
+
+```{r define-wrapper}
+# Import calibration module
+calib <- import("epydemix.calibration")
+ABCSampler <- calib$ABCSampler
+rmse <- calib$rmse
+
+# Define the wrapper function in Python
+py_run_string("
+from epydemix import simulate
+
+def simulate_wrapper(parameters):
+    results = simulate(**parameters)
+    return {'data': results.transitions['Susceptible_to_Infected_total']}
+")
+
+simulate_wrapper <- py$simulate_wrapper
+
+# Observed data
+observed_data <- data_calibration$data
+
+# Initialize the ABC sampler
+abc_sampler <- ABCSampler(
+  simulation_function = simulate_wrapper,
+  priors = priors,
+  parameters = parameters,
+  observed_data = observed_data,
+  distance_function = rmse
+)
+```
+
+---
+
+## 4. Running Calibration
+
+Epydemix supports three calibration strategies:
+
+| Method | Description | When to Use |
+|--------|-------------|-------------|
+| **ABC-SMC** | Sequential Monte Carlo with adaptive tolerance | Most accurate |
+| **ABC Rejection** | Simple accept/reject with fixed tolerance | Fast exploratory |
+| **Top X%** | Keep best fraction of simulations | Fixed runtime |
+
+```{r run-abc-smc}
+# ABC-SMC: 5 generations, 100 particles
+results_abc_smc <- abc_sampler$calibrate(
+  strategy = "smc",
+  num_particles = 100L,
+  num_generations = 5L
+)
+```
+
+```{r run-abc-rejection}
+# ABC Rejection: fixed tolerance
+results_abc_rejection <- abc_sampler$calibrate(
+  strategy = "rejection",
+  num_particles = 100L,
+  epsilon = 550000
+)
+```
+
+```{r run-top-perc}
+# Top X%: keep best 10% of 1000 simulations
+results_top_perc <- abc_sampler$calibrate(
+  strategy = "top_fraction",
+  Nsim = 1000L,
+  top_fraction = 0.1
+)
+```
+
+---
+
+## 5. Comparing Calibration Results
+
+### Calibration Fits
+
+```{r viz-fits}
+# Import visualization functions
+viz <- import("epydemix.visualization")
+plot_quantiles <- viz$plot_quantiles
+
+# Get quantiles for each method
+df_quantiles_smc <- results_abc_smc$get_calibration_quantiles(dates = simulation_dates_calibration)
+df_quantiles_rejection <- results_abc_rejection$get_calibration_quantiles(dates = simulation_dates_calibration)
+df_quantiles_top <- results_top_perc$get_calibration_quantiles(dates = simulation_dates_calibration)
+
+# Plot each method
+plot_quantiles(df_quantiles_smc, columns = "data", data = data_calibration,
+               title = "ABC-SMC", colors = "red", show_data = TRUE,
+               labels = list("New Infections"))
+
+plot_quantiles(df_quantiles_rejection, columns = "data", data = data_calibration,
+               title = "ABC Rejection", colors = "blue", show_data = TRUE)
+
+plot_quantiles(df_quantiles_top, columns = "data", data = data_calibration,
+               title = "Top 10%", colors = "green", show_data = TRUE)
+```
+
+### Posterior Distributions
+
+```{r viz-posterior-2d}
+plot_posterior_distribution_2d <- viz$plot_posterior_distribution_2d
+
+# 2D joint posteriors for each method
+plot_posterior_distribution_2d(
+  results_abc_smc$get_posterior_distribution(),
+  "transmission_rate", "recovery_rate",
+  kind = "kde", title = "ABC-SMC", prior_range = FALSE
+)
+
+plot_posterior_distribution_2d(
+  results_abc_rejection$get_posterior_distribution(),
+  "transmission_rate", "recovery_rate",
+  kind = "kde", title = "ABC Rejection", prior_range = FALSE
+)
+
+plot_posterior_distribution_2d(
+  results_top_perc$get_posterior_distribution(),
+  "transmission_rate", "recovery_rate",
+  kind = "kde", title = "Top 10%", prior_range = FALSE
+)
+```
+
+### Marginal Posteriors
+
+```{r viz-marginal-transmission}
+plot_posterior_distribution <- viz$plot_posterior_distribution
+
+# Transmission rate
+ax <- plot_posterior_distribution(
+  results_abc_smc$get_posterior_distribution(), "transmission_rate",
+  kind = "kde", color = "red", label = "ABC-SMC", prior_range = FALSE
+)
+ax <- plot_posterior_distribution(
+  results_abc_rejection$get_posterior_distribution(), "transmission_rate",
+  kind = "kde", color = "blue", label = "ABC Rejection", prior_range = FALSE, ax = ax
+)
+ax <- plot_posterior_distribution(
+  results_top_perc$get_posterior_distribution(), "transmission_rate",
+  kind = "kde", color = "green", label = "Top 10%", prior_range = FALSE, ax = ax
+)
+ax$set_title("Transmission Rate Posterior")
+ax$legend()
+ax
+```
+
+```{r viz-marginal-recovery}
+# Recovery rate
+ax <- plot_posterior_distribution(
+  results_abc_smc$get_posterior_distribution(), "recovery_rate",
+  kind = "kde", color = "red", label = "ABC-SMC", prior_range = FALSE
+)
+ax <- plot_posterior_distribution(
+  results_abc_rejection$get_posterior_distribution(), "recovery_rate",
+  kind = "kde", color = "blue", label = "ABC Rejection", prior_range = FALSE, ax = ax
+)
+ax <- plot_posterior_distribution(
+  results_top_perc$get_posterior_distribution(), "recovery_rate",
+  kind = "kde", color = "green", label = "Top 10%", prior_range = FALSE, ax = ax
+)
+ax$set_title("Recovery Rate Posterior")
+ax$legend()
+ax
+```
+
+### Distance Distributions
+
+```{r viz-distance}
+plot_distance_distribution <- viz$plot_distance_distribution
+
+ax <- plot_distance_distribution(
+  results_abc_smc$get_distances(),
+  kind = "kde", color = "red", label = "ABC-SMC", xlabel = "RMSE"
+)
+ax <- plot_distance_distribution(
+  results_abc_rejection$get_distances(),
+  kind = "kde", color = "blue", label = "ABC Rejection", xlabel = "RMSE", ax = ax
+)
+ax <- plot_distance_distribution(
+  results_top_perc$get_distances(),
+  kind = "kde", color = "green", label = "Top 10%", xlabel = "RMSE", ax = ax
+)
+ax$set_title("Distribution of Distances for Accepted Particles")
+ax$legend()
+ax
+```
+
+---
+
+## 6. Running Projections
+
+After calibrating, we project the epidemic forward using the posterior parameter samples.
+
+```{r run-projections}
+# Extend end date for projections
+projection_parameters <- reticulate::dict(
+  initial_conditions_dict = initial_conditions,
+  epimodel = model,
+  start_date = start_date_chr,
+  end_date = end_date_projection_chr
+)
+
+# Run projections
+results_with_projections <- abc_sampler$run_projections(projection_parameters)
+```
+
+```{r viz-projections}
+# Get quantiles
+df_calibration <- results_with_projections$get_calibration_quantiles(simulation_dates_calibration)
+df_projection <- results_with_projections$get_projection_quantiles(simulation_dates_projection)
+
+# Plot calibration fit
+ax <- plot_quantiles(df_calibration, columns = "data",
+                     colors = "orange", show_data = FALSE,
+                     labels = list("Calibration fit"))
+
+# Plot projection
+ax <- plot_quantiles(df_projection, columns = "data",
+                     colors = "blue", show_data = FALSE,
+                     labels = list("Projection"), ax = ax)
+
+# Add observed data points
+plt <- import("matplotlib.pyplot")
+ax$plot(as.character(data_calibration$date), data_calibration$data,
+        "ko", markersize = 4L, label = "Calibration data")
+ax$plot(as.character(data_projection$date), data_projection$data,
+        "o", color = "gray", markersize = 4L, alpha = 0.6, label = "Held-out data")
+
+# Mark calibration cutoff
+ax$axvline(as.character(data_calibration$date[nrow(data_calibration)]),
+           color = "red", linestyle = "--", alpha = 0.5)
+
+ax$set_ylabel("New Infections")
+ax$set_title("Model Calibration and Projection")
+ax$legend(loc = "upper right")
+ax
+```
+
+---
+
+## Resources
+
+- [Epydemix Documentation](https://epydemix.readthedocs.io/)
+- [ABC Methods Reference (Minter et al., 2019)](https://www.sciencedirect.com/science/article/pii/S175543651930026X)
+- [ABC-SMC Algorithm (Toni et al., 2009)](https://pubmed.ncbi.nlm.nih.gov/19205079)
+- [Reticulate Package](https://rstudio.github.io/reticulate/)
