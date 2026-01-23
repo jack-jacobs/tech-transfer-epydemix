@@ -23,40 +23,38 @@ Make sure you have:
 
 ```{r load-reticulate}
 library(reticulate)
+py_require("epydemix")
 library(readr)
 library(ggplot2)
 library(dplyr)
-
-# Option A: Use a conda environment
-# use_condaenv("epydemix-workshop")
-
-# Option B: Use system Python
-# use_python("/usr/bin/python3")
 
 # Import epydemix modules
 epydemix <- import("epydemix")
 load_predefined_model <- epydemix$load_predefined_model
 utils_module <- import("epydemix.utils")
 compute_simulation_dates <- utils_module$compute_simulation_dates
+
+# Import matplotlib for plot display
+plt <- import("matplotlib.pyplot")
 ```
 
 ---
 
 ## 1. Loading and Exploring the Data
 
-We'll calibrate an SIR model to synthetic incidence data (new infections per day) from Indonesia.
+We'll calibrate an SIR model to synthetic incidence data (new infections per day) from North Carolina.
 
 ```{r load-data}
 # Load the CSV directly from GitHub
 data <- read_csv(
-  "https://raw.githubusercontent.com/epistorm/epydemix/refs/heads/main/tutorials/data/incidence_data.csv",
+  "https://raw.githubusercontent.com/ngozzi/tech-transfer-epdemix/refs/heads/main/sessions/session-3/data/incidence_data.csv",
   show_col_types = FALSE
 )
 data <- data %>% mutate(date = as.Date(date))
 
 # Split into calibration and projection periods
 n_total <- nrow(data)
-n_calibration <- n_total - 40
+n_calibration <- n_total - 70
 data_calibration <- data[1:n_calibration, ]
 data_projection <- data[(n_calibration + 1):n_total, ]
 
@@ -87,7 +85,7 @@ ggplot() +
 ```{r setup-model}
 # Load predefined SIR model
 model <- load_predefined_model("SIR")
-model$import_epydemix_population(population_name = "Indonesia")
+model$import_epydemix_population(population_name = "United_States_North_Carolina")
 model
 ```
 
@@ -192,9 +190,9 @@ Epydemix supports three calibration strategies:
 
 | Method | Description | When to Use |
 |--------|-------------|-------------|
-| **ABC-SMC** | Sequential Monte Carlo with adaptive tolerance | Most accurate |
-| **ABC Rejection** | Simple accept/reject with fixed tolerance | Fast exploratory |
-| **Top X%** | Keep best fraction of simulations | Fixed runtime |
+| **ABC-SMC** | Sequential Monte Carlo with adaptive tolerance | Most accurate, recommended for final results |
+| **ABC Rejection** | Simple accept/reject with fixed tolerance | Fast exploratory analysis |
+| **Top X%** | Keep best fraction of simulations | Fixed runtime, good for prototyping |
 
 ```{r run-abc-smc}
 # ABC-SMC: 5 generations, 100 particles
@@ -206,11 +204,11 @@ results_abc_smc <- abc_sampler$calibrate(
 ```
 
 ```{r run-abc-rejection}
-# ABC Rejection: fixed tolerance
+# ABC Rejection: fixed tolerance based on ABC-SMC final epsilon
 results_abc_rejection <- abc_sampler$calibrate(
   strategy = "rejection",
   num_particles = 100L,
-  epsilon = 550000
+  epsilon = 17000
 )
 ```
 
@@ -229,7 +227,7 @@ results_top_perc <- abc_sampler$calibrate(
 
 ### Calibration Fits
 
-```{r viz-fits}
+```{r viz-fits-setup}
 # Import visualization functions
 viz <- import("epydemix.visualization")
 plot_quantiles <- viz$plot_quantiles
@@ -238,42 +236,62 @@ plot_quantiles <- viz$plot_quantiles
 df_quantiles_smc <- results_abc_smc$get_calibration_quantiles(dates = simulation_dates_calibration)
 df_quantiles_rejection <- results_abc_rejection$get_calibration_quantiles(dates = simulation_dates_calibration)
 df_quantiles_top <- results_top_perc$get_calibration_quantiles(dates = simulation_dates_calibration)
+```
 
-# Plot each method
+```{r viz-fits-smc}
+# Plot ABC-SMC
 plot_quantiles(df_quantiles_smc, columns = "data", data = data_calibration,
                title = "ABC-SMC", colors = "red", show_data = TRUE,
                labels = list("New Infections"))
+plt$show()
+```
 
+```{r viz-fits-rejection}
+# Plot ABC Rejection
 plot_quantiles(df_quantiles_rejection, columns = "data", data = data_calibration,
                title = "ABC Rejection", colors = "blue", show_data = TRUE)
+plt$show()
+```
 
+```{r viz-fits-top}
+# Plot Top 10%
 plot_quantiles(df_quantiles_top, columns = "data", data = data_calibration,
                title = "Top 10%", colors = "green", show_data = TRUE)
+plt$show()
 ```
 
 ### Posterior Distributions
 
-```{r viz-posterior-2d}
+```{r viz-posterior-2d-smc}
 plot_posterior_distribution_2d <- viz$plot_posterior_distribution_2d
 
-# 2D joint posteriors for each method
+# ABC-SMC posterior
 plot_posterior_distribution_2d(
   results_abc_smc$get_posterior_distribution(),
   "transmission_rate", "recovery_rate",
   kind = "kde", title = "ABC-SMC", prior_range = FALSE
 )
+plt$show()
+```
 
+```{r viz-posterior-2d-rejection}
+# ABC Rejection posterior
 plot_posterior_distribution_2d(
   results_abc_rejection$get_posterior_distribution(),
   "transmission_rate", "recovery_rate",
   kind = "kde", title = "ABC Rejection", prior_range = FALSE
 )
+plt$show()
+```
 
+```{r viz-posterior-2d-top}
+# Top 10% posterior
 plot_posterior_distribution_2d(
   results_top_perc$get_posterior_distribution(),
   "transmission_rate", "recovery_rate",
   kind = "kde", title = "Top 10%", prior_range = FALSE
 )
+plt$show()
 ```
 
 ### Marginal Posteriors
@@ -296,7 +314,7 @@ ax <- plot_posterior_distribution(
 )
 ax$set_title("Transmission Rate Posterior")
 ax$legend()
-ax
+plt$show()
 ```
 
 ```{r viz-marginal-recovery}
@@ -315,7 +333,7 @@ ax <- plot_posterior_distribution(
 )
 ax$set_title("Recovery Rate Posterior")
 ax$legend()
-ax
+plt$show()
 ```
 
 ### Distance Distributions
@@ -337,7 +355,7 @@ ax <- plot_distance_distribution(
 )
 ax$set_title("Distribution of Distances for Accepted Particles")
 ax$legend()
-ax
+plt$show()
 ```
 
 ---
@@ -359,36 +377,47 @@ projection_parameters <- reticulate::dict(
 results_with_projections <- abc_sampler$run_projections(projection_parameters)
 ```
 
-```{r viz-projections}
-# Get quantiles
-df_calibration <- results_with_projections$get_calibration_quantiles(simulation_dates_calibration)
-df_projection <- results_with_projections$get_projection_quantiles(simulation_dates_projection)
 
-# Plot calibration fit
-ax <- plot_quantiles(df_calibration, columns = "data",
-                     colors = "orange", show_data = FALSE,
-                     labels = list("Calibration fit"))
+```{r viz-projections, fig.width=10, fig.height=5}
+library(ggplot2)
+library(tidyr)
 
-# Plot projection
-ax <- plot_quantiles(df_projection, columns = "data",
-                     colors = "blue", show_data = FALSE,
-                     labels = list("Projection"), ax = ax)
+# Extract projection quantiles into an R data frame
+df_proj <- results_with_projections$get_projection_quantiles(simulation_dates_projection)
 
-# Add observed data points
-plt <- import("matplotlib.pyplot")
-ax$plot(as.character(data_calibration$date), data_calibration$data,
-        "ko", markersize = 4L, label = "Calibration data")
-ax$plot(as.character(data_projection$date), data_projection$data,
-        "o", color = "gray", markersize = 4L, alpha = 0.6, label = "Held-out data")
+# Build R data frame
+df_proj_r <- data.frame(
+  date = py_to_r(df_proj["date"]$values),
+  quantile = py_to_r(df_proj["quantile"]$values),
+  data = py_to_r(df_proj["data"]$values)
+)
+df_proj_r$date <- as.Date(df_proj_r$date)
 
-# Mark calibration cutoff
-ax$axvline(as.character(data_calibration$date[nrow(data_calibration)]),
-           color = "red", linestyle = "--", alpha = 0.5)
+# Pivot to wide format for ribbon plotting
+df_proj_wide <- pivot_wider(df_proj_r, names_from = quantile, values_from = data, names_prefix = "q")
 
-ax$set_ylabel("New Infections")
-ax$set_title("Model Calibration and Projection")
-ax$legend(loc = "upper right")
-ax
+# Plot with ggplot2
+ggplot() +
+  # Projection ribbon + median
+  geom_ribbon(data = df_proj_wide, aes(x = date, ymin = q0.05, ymax = q0.95),
+              fill = "blue", alpha = 0.3) +
+  geom_line(data = df_proj_wide, aes(x = date, y = q0.5, color = "Projection")) +
+  # Observed data points
+  geom_point(data = data_calibration, aes(x = date, y = data, shape = "Calibration data"),
+             color = "black", size = 1.5) +
+  geom_point(data = data_projection, aes(x = date, y = data, shape = "Held-out data"),
+             color = "gray50", size = 1.5, alpha = 0.6) +
+  # Calibration cutoff
+  geom_vline(xintercept = as.numeric(data_calibration$date[nrow(data_calibration)]),
+             color = "red", linetype = "dashed", alpha = 0.5) +
+  scale_color_manual(values = c("Projection" = "blue")) +
+  scale_shape_manual(values = c("Calibration data" = 16, "Held-out data" = 1)) +
+  labs(x = NULL, y = "New Infections", title = "Model Calibration and Projection",
+       color = NULL, shape = NULL) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+plt$show()
 ```
 
 ---
