@@ -23,17 +23,8 @@ Make sure you have:
 
 ```{r load-reticulate}
 library(reticulate)
-
-# Option A: Use a conda environment
-# use_condaenv("epydemix-workshop")
-
-# Option B: Use system Python
-# use_python("/usr/bin/python3")
-
-# Import epydemix
+py_require("epydemix")
 epydemix <- import("epydemix")
-EpiModel <- epydemix$EpiModel
-builtins <- import_builtins()
 ```
 
 ---
@@ -53,6 +44,9 @@ Transitions between compartments are either:
 - **Spontaneous**: Happens at a fixed rate (E→I, I→R)
 
 ```{r define-seir}
+EpiModel <- epydemix$EpiModel
+builtins <- import_builtins()
+
 # Create the model with four compartments
 model <- EpiModel(
   name = "SEIR Model",
@@ -100,21 +94,31 @@ model$set_population(population)
 
 ```{r viz-population}
 # Import visualization functions
+plt <- import("matplotlib.pyplot")
 viz <- import("epydemix.visualization")
 plot_contact_matrix <- viz$plot_contact_matrix
 plot_population <- viz$plot_population
 
 # Plot population distribution
 plot_population(population, title = "Population Distribution")
+plt$show()
 plot_population(population, title = "Population Distribution (%)", show_perc = TRUE)
+plt$show()
 ```
 
 ```{r viz-contacts}
 # Contact matrices by setting
 plot_contact_matrix(population, "home", show_values = TRUE)
+plt$show()
+
 plot_contact_matrix(population, "school", show_values = TRUE)
+plt$show()
+
 plot_contact_matrix(population, "work", show_values = TRUE)
+plt$show()
+
 plot_contact_matrix(population, "community", show_values = TRUE)
+plt$show()
 ```
 
 **Reading contact matrices:** Each cell $(i, j)$ shows the average daily contacts that a person in age group $i$ has with people in age group $j$.
@@ -177,6 +181,7 @@ plot_quantiles(
   columns = c("S_total", "E_total", "I_total", "R_total"),
   title = "SEIR Epidemic Trajectory"
 )
+plt$show()
 ```
 
 ```{r viz-age-groups}
@@ -187,6 +192,7 @@ plot_quantiles(
   title = "Infections by Age Group",
   legend_loc = "upper right"
 )
+plt$show()
 ```
 
 ```{r viz-trajectories}
@@ -198,6 +204,7 @@ plot_trajectories(
   columns = c("I_total"),
   title = "Individual Simulation Trajectories (Infected)"
 )
+plt$show()
 ```
 
 ---
@@ -271,6 +278,7 @@ simulation_dates <- compute_simulation_dates("2026-01-01", "2026-08-31")
 model_contact_intervention$compute_contact_reductions(simulation_dates)
 
 plot_spectral_radius(model_contact_intervention, show_perc = TRUE)
+plt$show()
 ```
 
 ### Comparing Scenarios
@@ -311,13 +319,12 @@ ax <- plot_quantiles(df_transmission, columns = c("I_total"),
 
 ax$set_title("Comparison of Intervention Strategies")
 ax$legend()
-ax
+plt$show()
 ```
 
 ### Quantifying Impact
 
 ```{r compute-impact}
-%%R
 # Get full trajectories
 traj_baseline <- results_baseline$get_stacked_compartments()
 traj_contact <- results_contact$get_stacked_compartments()
@@ -367,34 +374,100 @@ cat(sprintf("  Peak reduction: %.1f%% (IQR: %.1f–%.1f%%)\n",
             quantile(peak_reduction_transmission, 0.75)))
 ```
 
-```{r viz-impact, fig.width=10, fig.height=4}
-library(ggplot2)
-library(tibble)
 
-df_impact <- tibble(
-  metric = c(
-    rep("Infections Averted (%)", length(averted_contact) + length(averted_transmission)),
-    rep("Peak Reduction (%)", length(peak_reduction_contact) + length(peak_reduction_transmission))
-  ),
-  intervention = c(
-    rep("Contact", length(averted_contact)),
-    rep("Transmission", length(averted_transmission)),
-    rep("Contact", length(peak_reduction_contact)),
-    rep("Transmission", length(peak_reduction_transmission))
-  ),
-  value = c(
-    averted_contact, averted_transmission,
-    peak_reduction_contact, peak_reduction_transmission
+---
+
+## 5. Modeling Vaccination Campaigns
+
+Vaccination is a key intervention strategy. In Epydemix, we can model vaccination by:
+
+1. Adding a **vaccinated compartment** (e.g., `SV` for vaccinated susceptibles)
+2. Defining a **spontaneous transition** that moves individuals from `S` to `SV` at a fixed vaccination rate
+3. Reducing transmission for vaccinated individuals based on **vaccine effectiveness (VE)**
+
+### Building the Model with Vaccination
+
+We create an SIR model with an additional `SV` (vaccinated susceptible) compartment. Susceptibles are vaccinated at a constant rate `vax_rate`, and vaccinated individuals have reduced susceptibility based on vaccine effectiveness (VE).
+
+```{r build-vax-model}
+# Create model with vaccination compartment
+model_vax <- EpiModel(name = "SIR with Vaccination", compartments = c("S", "SV", "I", "R"))
+
+# S + I → I (unvaccinated infection)
+params_SI <- builtins$tuple(list("beta", "I"))
+model_vax$add_transition("S", "I", params = params_SI, kind = "mediated")
+
+# SV + I → I (vaccinated infection, reduced by VE)
+params_SVI <- builtins$tuple(list("(1 - VE) * beta", "I"))
+model_vax$add_transition("SV", "I", params = params_SVI, kind = "mediated")
+
+# S → SV (vaccination at constant rate)
+model_vax$add_transition("S", "SV", params = "vax_rate", kind = "spontaneous")
+
+# I → R (recovery)
+model_vax$add_transition("I", "R", params = "gamma", kind = "spontaneous")
+
+# Set parameters
+model_vax$add_parameter("beta", 0.02)
+model_vax$add_parameter("gamma", 0.1)
+model_vax$add_parameter("VE", 0.7)         # 70% vaccine effectiveness
+model_vax$add_parameter("vax_rate", 0.005)  # ~0.5% of susceptibles vaccinated per day
+
+# Use North Carolina population
+pop_nc <- load_epydemix_population("United_States_North_Carolina")
+model_vax$set_population(pop_nc)
+
+model_vax
+```
+
+### Running the Vaccination Simulation
+
+```{r run-vax-simulation}
+Nk_nc <- pop_nc$Nk
+
+results_vax <- model_vax$run_simulations(
+  start_date = "2026-01-01",
+  end_date = "2026-06-30",
+  Nsim = 25L,
+  initial_conditions_dict = dict(
+    "S" = Nk_nc - rep(10, 5),
+    "I" = rep(10, 5),
+    "SV" = rep(0, 5),
+    "R" = rep(0, 5)
   )
 )
-
-ggplot(df_impact, aes(x = intervention, y = value, fill = intervention)) +
-  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
-  facet_wrap(~metric, scales = "free_y") +
-  labs(x = NULL, y = "Percentage", title = "Impact of Intervention Strategies") +
-  theme_minimal() +
-  scale_fill_manual(values = c("Contact" = "blue", "Transmission" = "green"))
 ```
+
+```{r viz-vax-compartments}
+# Plot compartment evolution
+df_vax_quantiles <- results_vax$get_quantiles_compartments()
+
+plot_quantiles(
+  df_vax_quantiles,
+  columns = c("S_total", "SV_total", "I_total", "R_total"),
+  title = "SIR Model with Vaccination Campaign"
+)
+plt$show()
+```
+
+```{r viz-vax-age-groups}
+# Vaccinated individuals by age group
+plot_quantiles(
+  df_vax_quantiles,
+  columns = c("SV_0-4", "SV_5-19", "SV_20-49", "SV_50-64", "SV_65+"),
+  title = "Vaccinated Susceptibles by Age Group",
+  legend_loc = "center right"
+)
+plt$show()
+```
+
+### Limitations and Extensions
+
+The constant-rate vaccination model above is a simplification. In reality, vaccination campaigns have variable uptake over time and across age groups. Two possible extensions are:
+
+1. **Time- and age-dependent vaccination rates.** You can make `vax_rate` change over time to model a ramp-up phase followed by steady-state capacity, or set different rates for different age groups to reflect prioritization strategies. For more details, see [this tutorial](https://github.com/epistorm/epydemix/blob/main/tutorials/06_Advanced_Modeling_Features.ipynb).
+
+2. **Custom transition functions based on daily doses.** Instead of a fixed rate, you can define a custom transition function that takes a specific number of available doses per day and age group, and distributes them only among eligible (susceptible) individuals. This allows modeling dose constraints, supply bottlenecks, and wastage. For more details, see [this tutorial](https://github.com/epistorm/epydemix/blob/main/tutorials/09_Vaccinations.ipynb).
 
 ---
 
