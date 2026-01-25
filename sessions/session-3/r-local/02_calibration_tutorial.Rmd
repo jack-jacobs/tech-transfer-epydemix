@@ -47,7 +47,7 @@ We'll calibrate an SIR model to synthetic incidence data (new infections per day
 ```{r load-data}
 # Load the CSV directly from GitHub
 data <- read_csv(
-  "https://raw.githubusercontent.com/ngozzi/tech-transfer-epdemix/refs/heads/main/sessions/session-3/data/incidence_data.csv",
+  "https://raw.githubusercontent.com/epistorm/tech-transfer-epydemix/refs/heads/main/sessions/session-3/data/incidence_data.csv",
   show_col_types = FALSE
 )
 data <- data %>% mutate(date = as.Date(date))
