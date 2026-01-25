@@ -1,0 +1,264 @@
+---
+title: "Exercise 3: Two-Strain Model"
+subtitle: "Session 4 - Exercises"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Objective
+
+Model the emergence of a more transmissible variant using a multi-strain SIR model.
+
+**Skills practiced:**
+
+- Designing complex compartmental structures
+- Using `override_parameter` for delayed strain emergence
+- Interpreting multi-strain dynamics
+
+## Prerequisites
+
+```{r load-reticulate}
+library(reticulate)
+py_require("epydemix")
+
+# Import epydemix
+epydemix <- import("epydemix")
+EpiModel <- epydemix$EpiModel
+builtins <- import_builtins()
+np <- import("numpy")
+viz <- import("epydemix.visualization")
+plot_quantiles <- viz$plot_quantiles
+plt <- import("matplotlib.pyplot")
+```
+
+---
+
+## Model Structure
+
+We model two strains where strain 2 is more transmissible:
+
+**Compartments:** S, I1, I2, R1, R2
+
+**Transitions:**
+
+- S + I1 → 2I1 (rate β) — infection with strain 1
+- S + I2 → 2I2 (rate β·ψ) — infection with strain 2 (ψ > 1)
+- R1 + I2 → I2 + R2 (rate β·ψ·γ) — reinfection of R1 by strain 2
+- I1 → R1 (rate μ) — recovery from strain 1
+- I2 → R2 (rate μ) — recovery from strain 2
+
+**Parameters:**
+
+- β = 0.20 (base transmission rate)
+- μ = 0.1 (recovery rate)
+- ψ = 1.5 (strain 2 is 50% more transmissible)
+- γ = 0.4 (R1 individuals have 60% protection against strain 2)
+
+---
+
+## Task 1: Implement the Two-Strain Model
+
+```{r create-model}
+# Function to create a two-strain model
+create_two_strain_model <- function(psi = 1.5, gamma_val = 0.4, beta = 0.20, mu = 0.1) {
+  # TODO: Create the model with compartments S, I1, I2, R1, R2
+  model <- ...
+
+  # TODO: Add transitions
+  # S + I1 -> 2I1
+  # Hint: params_S_I1 <- builtins$tuple(list("beta", "I1"))
+
+
+  # S + I2 -> 2I2 (more transmissible)
+  # Hint: params_S_I2 <- builtins$tuple(list("beta*psi", "I2"))
+
+
+  # R1 + I2 -> I2 + R2 (reinfection)
+  # Hint: params_R1_I2 <- builtins$tuple(list("beta*psi*gamma", "I2"))
+
+
+  # I1 -> R1
+
+
+  # I2 -> R2
+
+
+  # TODO: Set parameters (beta, psi, gamma, mu1, mu2)
+
+
+  return(model)
+}
+
+# Create the model
+model <- create_two_strain_model(psi = 1.5, gamma_val = 0.4)
+model
+```
+
+---
+
+## Task 2: Delay Strain 2 Emergence
+
+Use `override_parameter` to set psi=0 and mu2=0 for the first 30 days, effectively turning off strain 2 transmission and recovery.
+
+```{r delay-emergence}
+# TODO: Override psi to 0 for the first 30 days
+
+
+# TODO: Override mu2 to 0 for the first 30 days
+
+```
+
+---
+
+## Task 3: Simulate and Visualize
+
+```{r run-simulation}
+# Get default population Nk
+Nk_val <- py_to_r(model$population$Nk)
+
+# TODO: Set up initial conditions using reticulate::dict() and np$array()
+# - S: population - 20
+# - I1: 10 (strain 1 infected)
+# - I2: 10 (strain 2 infected, but dormant until day 30)
+# - R1: 0
+# - R2: 0
+initial_conditions <- ...
+
+# TODO: Run 50 simulations over 6 months
+results <- ...
+```
+
+```{r viz-strains}
+# TODO: Get quantiles and plot I1 and I2 over time
+df_quantiles <- ...
+
+# Use plot_quantiles with ax parameter to overlay plots
+
+plt$show()
+```
+
+---
+
+## Task 4: Experiments
+
+### Experiment A: Effect of Emergence Timing
+
+What happens if strain 2 emerges earlier (day 15) vs. later (day 45)?
+
+```{r experiment-timing}
+run_with_emergence_day <- function(emergence_day) {
+  m <- create_two_strain_model(psi = 1.5, gamma_val = 0.4)
+
+  emergence_date <- as.character(as.Date("2025-01-01") + emergence_day)
+
+  # TODO: Override parameters until emergence
+
+
+  # TODO: Set up initial conditions
+
+
+  # TODO: Run simulations
+  res <- ...
+
+  list(results = res, emergence_date = emergence_date)
+}
+
+# TODO: Run with different emergence times (day 15, 30, 45)
+res_early <- ...
+res_mid <- ...
+res_late <- ...
+```
+
+```{r viz-early}
+# TODO: Visualize early emergence scenario
+
+plt$show()
+```
+
+```{r viz-mid}
+# TODO: Visualize mid emergence scenario
+
+plt$show()
+```
+
+```{r viz-late}
+# TODO: Visualize late emergence scenario
+
+plt$show()
+```
+
+### Experiment B: Effect of Transmissibility Advantage
+
+What if strain 2 is only 20% more transmissible (ψ = 1.2) vs 100% more transmissible (ψ = 2.0)?
+
+```{r experiment-psi}
+run_with_psi <- function(psi_value) {
+  # TODO: Create model with specified psi
+  # TODO: Override parameters for first 30 days
+  # TODO: Set up initial conditions
+  # TODO: Run simulations
+  ...
+}
+
+# TODO: Run with different psi values (1.2, 1.5, 2.0)
+results_psi_low <- ...
+results_psi_mid <- ...
+results_psi_high <- ...
+```
+
+```{r viz-psi-low}
+# TODO: Visualize psi = 1.2 scenario
+
+plt$show()
+```
+
+```{r viz-psi-mid}
+# TODO: Visualize psi = 1.5 scenario
+
+plt$show()
+```
+
+```{r viz-psi-high}
+# TODO: Visualize psi = 2.0 scenario
+
+plt$show()
+```
+
+### Compute Dominance Day
+
+```{r compute-dominance}
+# Optional: Compute dominance day
+compute_dominance_day <- function(results) {
+  traj <- results$get_stacked_compartments()
+  I1_median <- apply(py_to_r(traj["I1_total"])$I1_total, 2, median)
+  I2_median <- apply(py_to_r(traj["I2_total"])$I2_total, 2, median)
+
+  crossover <- which(I2_median > I1_median & I2_median > 100)
+  if (length(crossover) > 0) return(crossover[1])
+  return(NA)
+}
+
+# TODO: Print days until dominance for each psi value
+```
+
+---
+
+## Discussion
+
+*Write your observations here:*
+
+1. **Emergence timing:** How does the timing of strain 2 emergence affect the dynamics? What happens when strain 1 has already infected a large portion of the population?
+
+2. **Transmissibility advantage (ψ):** How does the transmissibility advantage affect the speed of strain replacement? At what ψ value does strain 2 fail to dominate?
+
+3. **Cross-immunity (γ):** With γ = 0.4 (60% protection), how does this partial immunity affect the dynamics? What would happen with complete cross-protection (γ = 0)?
+
+4. **Real-world implications:** What do these results suggest about variant emergence in real pandemics (e.g., SARS-CoV-2 Alpha, Delta, Omicron)?

@@ -17,12 +17,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
 ```{r load-reticulate}
 library(reticulate)
-
-# Option A: Use a conda environment
-# use_condaenv("epydemix-workshop")
-
-# Option B: Use system Python
-# use_python("/usr/bin/python3")
+py_require("epydemix")
 
 # Import epydemix
 epydemix <- import("epydemix")
@@ -141,24 +136,20 @@ results <- model$run_simulations(
 ```
 
 ```{r viz-strains}
+plt <- import("matplotlib.pyplot")
 df_quantiles <- results$get_quantiles_compartments()
-
-sns <- import("seaborn")
-colors <- py_to_r(sns$color_palette("Dark2"))
 
 # Plot both strains
 ax <- plot_quantiles(df_quantiles, columns = c("I1_total"),
-                     colors = colors[[1]], labels = list("Strain 1 (original)"))
+                     colors = "orange", labels = list("Strain 1 (original)"))
 ax <- plot_quantiles(df_quantiles, columns = c("I2_total"),
-                     colors = colors[[2]], labels = list("Strain 2 (more transmissible)"), ax = ax)
-
-# Mark emergence date
-ax$axvline("2025-02-01", color = "red", linestyle = "--", alpha = 0.5, label = "Strain 2 emerges")
+                     colors = "blue", labels = list("Strain 2 (more transmissible)"), ax = ax)
 
 ax$set_title("Two-Strain Dynamics: Emergence of a More Transmissible Variant")
 ax$set_ylabel("Infected")
 ax$legend()
-ax
+
+plt$show()
 ```
 
 ---
@@ -208,23 +199,34 @@ res_late <- run_with_emergence_day(45)
 ```{r viz-early}
 # Early emergence
 df <- res_early$results$get_quantiles_compartments()
-ax <- plot_quantiles(df, columns = c("I1_total"), colors = colors[[1]], labels = list("Strain 1"))
-ax <- plot_quantiles(df, columns = c("I2_total"), colors = colors[[2]], labels = list("Strain 2"), ax = ax)
-ax$axvline(res_early$emergence_date, color = "red", linestyle = "--", alpha = 0.5)
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
 ax$set_title("Early emergence (day 15)")
 ax$legend()
-ax
+
+plt$show()
+```
+
+```{r viz-mid}
+# Mid emergence
+df <- res_mid$results$get_quantiles_compartments()
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
+ax$set_title("Mid emergence (day 30)")
+ax$legend()
+
+plt$show()
 ```
 
 ```{r viz-late}
 # Late emergence
 df <- res_late$results$get_quantiles_compartments()
-ax <- plot_quantiles(df, columns = c("I1_total"), colors = colors[[1]], labels = list("Strain 1"))
-ax <- plot_quantiles(df, columns = c("I2_total"), colors = colors[[2]], labels = list("Strain 2"), ax = ax)
-ax$axvline(res_late$emergence_date, color = "red", linestyle = "--", alpha = 0.5)
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
 ax$set_title("Late emergence (day 45)")
 ax$legend()
-ax
+
+plt$show()
 ```
 
 ### Experiment B: Effect of Transmissibility Advantage
@@ -264,22 +266,35 @@ results_psi_high <- run_with_psi(2.0)
 
 ```{r viz-psi-low}
 df <- results_psi_low$get_quantiles_compartments()
-ax <- plot_quantiles(df, columns = c("I1_total"), colors = colors[[1]], labels = list("Strain 1"))
-ax <- plot_quantiles(df, columns = c("I2_total"), colors = colors[[2]], labels = list("Strain 2"), ax = ax)
-ax$axvline("2025-02-01", color = "red", linestyle = "--", alpha = 0.5)
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
+
 ax$set_title("psi = 1.2 (20% advantage)")
 ax$legend()
-ax
+
+plt$show()
+```
+
+```{r viz-psi-mid}
+df <- results_psi_mid$get_quantiles_compartments()
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
+
+ax$set_title("psi = 1.5 (50% advantage)")
+ax$legend()
+
+plt$show()
 ```
 
 ```{r viz-psi-high}
 df <- results_psi_high$get_quantiles_compartments()
-ax <- plot_quantiles(df, columns = c("I1_total"), colors = colors[[1]], labels = list("Strain 1"))
-ax <- plot_quantiles(df, columns = c("I2_total"), colors = colors[[2]], labels = list("Strain 2"), ax = ax)
-ax$axvline("2025-02-01", color = "red", linestyle = "--", alpha = 0.5)
+ax <- plot_quantiles(df, columns = c("I1_total"), colors = "orange", labels = list("Strain 1"))
+ax <- plot_quantiles(df, columns = c("I2_total"), colors = "blue", labels = list("Strain 2"), ax = ax)
+
 ax$set_title("psi = 2.0 (100% advantage)")
 ax$legend()
-ax
+
+plt$show()
 ```
 
 ### Compute Dominance Day
@@ -287,8 +302,8 @@ ax
 ```{r compute-dominance}
 compute_dominance_day <- function(results) {
   traj <- results$get_stacked_compartments()
-  I1_median <- apply(py_to_r(traj["I1_total"]), 2, median)
-  I2_median <- apply(py_to_r(traj["I2_total"]), 2, median)
+  I1_median <- apply(py_to_r(traj["I1_total"])$I1_total, 2, median)
+  I2_median <- apply(py_to_r(traj["I2_total"])$I2_total, 2, median)
 
   crossover <- which(I2_median > I1_median & I2_median > 100)
   if (length(crossover) > 0) return(crossover[1])

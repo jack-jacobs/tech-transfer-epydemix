@@ -89,7 +89,13 @@ peak_days = trajectories["I_total"].argmax(axis=1)  # Index of peak for each sim
 
 ---
 
-## Exercise 3: Two-Strain Model
+## Exercise 3: Two-Strain Model (Intermediate-Advanced)
+
+| | Template | Solution |
+|---|---|---|
+| Python | [exercise_3_two_strains.ipynb](exercises/python/exercise_3_two_strains.ipynb) | [exercise_3_two_strains.ipynb](solutions/python/exercise_3_two_strains.ipynb) |
+| R (Colab) | [exercise_3_two_strains.ipynb](exercises/r-colab/exercise_3_two_strains.ipynb) | [exercise_3_two_strains.ipynb](solutions/r-colab/exercise_3_two_strains.ipynb) |
+| R (Local) | [exercise_3_two_strains.Rmd](exercises/r-local/exercise_3_two_strains.Rmd) | [exercise_3_two_strains.Rmd](solutions/r-local/exercise_3_two_strains.Rmd) |
 
 **Objective:** Model the emergence of a more transmissible variant using a multi-strain SIR model.
 
@@ -128,6 +134,11 @@ A second, more transmissible strain emerges after the first strain has been circ
 
 <details>
 <summary>Hint</summary>
+
+For the S → I₂ transition (infection with strain 2), use a parameter expression:
+```python
+model.add_transition(source="S", target="I2", kind="mediated", params=("beta*psi", "I2"))
+```
 
 For the R₁ + I₂ → I₂ + R₂ transition (reinfection), the target is I₂:
 ```python
