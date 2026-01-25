@@ -4,7 +4,7 @@ Independent exercises to reinforce concepts from Session 3. Work through these a
 
 ---
 
-## Exercise 1: SEIRS Model for a Different Country (Beginner)
+## Exercise 1: SEIRS Model for a Different Country
 
 | | Template | Solution |
 |---|---|---|
@@ -44,7 +44,7 @@ model.add_transition(source="R", target="S", params="omega", kind="spontaneous")
 
 ---
 
-## Exercise 2: Comparing Intervention Strategies (Intermediate)
+## Exercise 2: Comparing Intervention Strategies
 
 **Objective:** Design and compare three different intervention strategies for controlling an outbreak.
 
@@ -83,7 +83,7 @@ peak_days = trajectories["I_total"].argmax(axis=1)  # Index of peak for each sim
 
 ---
 
-## Exercise 3: Two-Strain Model (Intermediate-Advanced)
+## Exercise 3: Two-Strain Model
 
 **Objective:** Model the emergence of a more transmissible variant using a multi-strain SIR model.
 
@@ -131,7 +131,7 @@ model.add_transition(source="R1", target="I2", kind="mediated", params=("beta*ps
 
 ---
 
-## Exercise 4: Calibrate and Project an SEIR Model (Advanced)
+## Exercise 4: Calibrate and Project an SEIR Model
 
 **Objective:** Calibrate an SEIR model to real-world-like data and generate projections.
 
