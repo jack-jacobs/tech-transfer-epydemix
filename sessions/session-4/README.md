@@ -171,6 +171,10 @@ def simulate_wrapper(parameters):
 
 ---
 
+## Exercise Templates
+
+Starter notebooks with structure, imports, and setup (but not the full solution code) are available in the [exercises/](exercises/) folder. Use these to work through the exercises on your own.
+
 ## Solutions
 
 Solutions are available in three formats (Python, R Colab, R Local). See the [solutions/](solutions/) folder.

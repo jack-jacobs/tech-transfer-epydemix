@@ -23,12 +23,7 @@ Make sure you have:
 
 ```{r load-reticulate}
 library(reticulate)
-
-# Option A: Use a conda environment
-# use_condaenv("epydemix-workshop")
-
-# Option B: Use system Python
-# use_python("/usr/bin/python3")
+py_require("epydemix")
 
 # Import epydemix
 epydemix <- import("epydemix")
@@ -208,9 +203,9 @@ df_seir <- results_seir$get_quantiles_compartments()
 
 # Compare infected populations
 ax <- plot_quantiles(df_quantiles, columns = c("I_total"),
-                     colors = "blue", labels = "SEIRS (waning immunity)")
+                     colors = "orange", labels = "SEIRS (waning immunity)")
 ax <- plot_quantiles(df_seir, columns = c("I_total"),
-                     colors = "orange", labels = "SEIR (permanent immunity)", ax = ax)
+                     colors = "red", labels = "SEIR (permanent immunity)", ax = ax)
 ax$set_title("Infected Over Time: SEIRS vs SEIR")
 ax$legend()
 ax
@@ -219,9 +214,9 @@ ax
 ```{r compare-susceptible}
 # Compare susceptible populations
 ax <- plot_quantiles(df_quantiles, columns = c("S_total"),
-                     colors = "blue", labels = "SEIRS (waning immunity)")
+                     colors = "orange", labels = "SEIRS (waning immunity)")
 ax <- plot_quantiles(df_seir, columns = c("S_total"),
-                     colors = "orange", labels = "SEIR (permanent immunity)", ax = ax)
+                     colors = "red", labels = "SEIR (permanent immunity)", ax = ax)
 ax$set_title("Susceptible Over Time: SEIRS vs SEIR")
 ax$legend()
 ax
