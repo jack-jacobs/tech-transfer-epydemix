@@ -70,6 +70,8 @@ By the end, you'll be equipped to incorporate Epydemix into research and operati
 - [Epydemix Documentation](https://epydemix.readthedocs.io/en/latest/)
 - [EpyScenario Platform](https://scenario.epydemix.org/)
 
+To stay updated on new features and releases, consider starring the [Epydemix repository](https://github.com/epistorm/epydemix) on GitHub.
+
 ### Citing Epydemix
 
 If you use Epydemix in your work, please cite:
