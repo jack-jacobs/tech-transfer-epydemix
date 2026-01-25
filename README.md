@@ -45,7 +45,7 @@ By the end, you'll be equipped to incorporate Epydemix into research and operati
 | Time | Session |
 |------|---------|
 | 09:00 – 09:30 | **Recap and Day 2 Goals** |
-| 09:30 – 11:00 | **Session 4: Tutorials and Exercises I** — Model design, parameterization, retrospective calibration, ABC pipelines |
+| 09:30 – 11:00 | **Session 4: Tutorials and Exercises** — Model design, parameterization, retrospective calibration, ABC pipelines |
 | 11:00 – 11:30 | *Coffee Break* |
 | 11:30 – 13:00 | **Session 5: Forecast Pipeline and Application** — Full forecasting workflow, data ingestion, GUI exploration, guided exercises |
 | 13:00 – 14:30 | *Lunch Break* |

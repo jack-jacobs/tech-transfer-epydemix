@@ -1,4 +1,4 @@
-# Session 4: Tutorials and Exercises I
+# Session 4: Tutorials and Exercises
 
 Independent exercises to reinforce concepts from Session 3. Work through these at your own pace—solutions are provided, but try to solve them yourself first.
 
