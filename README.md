@@ -55,7 +55,7 @@ By the end, you'll be equipped to incorporate Epydemix into research and operati
 
 ## Quick Links
 
-- [Installation Guides](installation/)
+- [Installation Guides](installation/) (includes [Miniforge option](installation/miniforge-setup.md) for organizations with Anaconda licensing concerns)
 - [Session 1: Theory Behind Epydemix](sessions/session-1/)
 - [Session 2: Epydemix Simulation Platform](sessions/session-2/)
 - [Session 3: Python Package & R Interface](sessions/session-3/)
