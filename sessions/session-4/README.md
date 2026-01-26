@@ -89,7 +89,7 @@ peak_days = trajectories["I_total"].argmax(axis=1)  # Index of peak for each sim
 
 ---
 
-## Exercise 3: Two-Strain Model (Intermediate-Advanced)
+## Exercise 3: Two-Strain Model 
 
 | | Template | Solution |
 |---|---|---|
