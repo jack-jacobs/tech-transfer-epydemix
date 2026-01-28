@@ -1,3 +1,7 @@
+# Jack's workshop notes and personal env
+workshop_notes.qmd
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
